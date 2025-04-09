@@ -2,6 +2,11 @@
 
 Adds a Rename Tab option in the Right-Click Menu for the tabs.
 
+
+https://github.com/user-attachments/assets/e9720fd2-4df1-4c29-af6c-9bef67e3e7b6
+
+
+
 ## Pre-requisites:
 - Enable userChrome Customizations: In `about:config` go to `toolkit.legacyUserProfileCustomizations.stylesheets` and set it to True.
 - Install and Setup the userChrome.js Loader from [Autoconfig](https://github.com/MrOtherGuy/fx-autoconfig/tree/master)
