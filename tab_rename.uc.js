@@ -22,6 +22,7 @@ console.log("TabRenamer_v1.0.0: Starting up...");
             try {
                 this.createUIElements();
                 this.addContextMenuListener();
+                this.setupSessionRestore();
                 window.addEventListener('unload', this.destroy.bind(this), { once: true });
                 // console.log("TabRenamer: Initialized successfully."); // Optional: Keep for debugging startup flow
             } catch (e) {
@@ -390,7 +391,24 @@ console.log("TabRenamer_v1.0.0: Starting up...");
                  console.warn("TabRenamer Persist: Tab is pinned, but required pinId or gZenPinnedTabManager is missing. Persistence skipped.");
                  persistenceError = new Error("Missing pinId or PinnedTabManager for persistence.");
             }
-             // Non-pinned tabs rely solely on the 'zen-has-static-label' attribute for session restore logic (handled elsewhere)
+            
+            // 2b. Persist Changes for Non-Pinned Tabs via SessionStore
+            if (!isPinned && typeof SessionStore !== 'undefined') {
+                try {
+                    if (setCustomPersistenceFlag && titleToPersist) {
+                        // Save the custom title to SessionStore
+                        SessionStore.setCustomTabValue(tabToSave, "zen-renamed-title", titleToPersist);
+                        // console.log(`TabRenamer Persist: Saved non-pinned tab title "${titleToPersist}" to SessionStore.`); // Optional debug
+                    } else {
+                        // Remove the saved title if reverting to default
+                        SessionStore.deleteCustomTabValue(tabToSave, "zen-renamed-title");
+                        // console.log("TabRenamer Persist: Removed custom title from SessionStore for non-pinned tab."); // Optional debug
+                    }
+                } catch (e) {
+                    console.error("TabRenamer Persist: Error saving non-pinned tab title to SessionStore:", e);
+                    persistenceError = e;
+                }
+            }
 
             // 3. Halt the Renaming UI - IMPORTANT: Do this *after* potential async persistence
             this.haltRename(true); // Pass true as save process completed (even if persistence failed)
@@ -452,6 +470,72 @@ console.log("TabRenamer_v1.0.0: Starting up...");
              }
 
             // console.log(`TabRenamer: Renaming halted for tab. Saved: ${!!didSaveSuccessfully}`); // Optional debug
+        },
+
+        // --- Session Restore Logic ---
+        setupSessionRestore: function () {
+            // Restore custom titles for tabs that are restored from session
+            const restoreCustomTitle = (tab) => {
+                if (!window.SessionStore) {
+                    // console.warn("TabRenamer Restore: SessionStore not available during restore"); // Optional debug
+                    return;
+                }
+                try {
+                    // Skip if it's a pinned tab (handled by Zen native) or essential tab
+                    if (tab.pinned || tab.hasAttribute('zen-essential')) return;
+
+                    const customTitle = SessionStore.getCustomTabValue(tab, "zen-renamed-title");
+                    // console.log(`TabRenamer Restore: Checking restore for tab (pinned: ${tab.pinned}): "${customTitle}"`); // Optional debug
+                    
+                    if (customTitle) {
+                        gBrowser._setTabLabel(tab, customTitle);
+                        tab.label = customTitle; // Force label update
+                        tab.setAttribute('zen-has-static-label', 'true');
+                        // console.log(`TabRenamer Restore: Restored custom title "${customTitle}" for tab.`); // Optional debug
+                    } else if (tab.hasAttribute('zen-has-static-label')) {
+                        // Fallback: If we have the attribute but no title in SessionStore,
+                        // remove the attribute so the tab can update normally from the page title.
+                        // console.warn("TabRenamer Restore: Tab has static label attribute but no stored title. Resetting."); // Optional debug
+                        tab.removeAttribute('zen-has-static-label');
+                        gBrowser.setTabTitle(tab);
+                    }
+                } catch (e) {
+                    console.error("TabRenamer Restore: Error restoring title", e);
+                }
+            };
+
+            // Listener for tabs restored individually or late
+            window.addEventListener("SSTabRestored", (event) => {
+                restoreCustomTitle(event.target);
+            }, { once: false });
+
+            // Initial check for already open tabs (important for restart persistence)
+            const initRestore = async () => {
+                if (window.SessionStore) {
+                    // Wait for SessionStore to be fully initialized if promise is available
+                    if (window.SessionStore.promiseInitialized) {
+                        try {
+                            await window.SessionStore.promiseInitialized;
+                        } catch (e) {
+                            console.error("TabRenamer Restore: Error waiting for SessionStore promise:", e);
+                        }
+                    }
+                    // console.log("TabRenamer Restore: SessionStore initialized. Checking existing tabs..."); // Optional debug
+                    // Restore titles for all existing tabs
+                    if (typeof gBrowser !== 'undefined' && gBrowser.tabs) {
+                        Array.from(gBrowser.tabs).forEach(restoreCustomTitle);
+                    }
+                } else {
+                    // console.warn("TabRenamer Restore: SessionStore not found in initRestore"); // Optional debug
+                }
+            };
+            
+            // Run initRestore after a short delay to ensure SessionStore is ready
+            if (document.readyState === 'complete') {
+                setTimeout(initRestore, 100);
+            } else {
+                window.addEventListener('load', () => setTimeout(initRestore, 100));
+            }
         },
 
     }; // End of window.TabRenamer object
